@@ -1,0 +1,206 @@
+---
+title: "Gold an Inflation Hedge"
+author: "Abhishek Mani"
+date: "2022-10-10"
+output: html_document
+---
+
+```{css, echo=FALSE}
+.center {
+  display: table;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, eval=TRUE, fig.height = 3, fig.align="center", message = FALSE, warning = FALSE)
+options(scipen=10000)
+options(digits=3)
+library(fpp2)
+library(tidyquant)
+library(tidyverse)
+library(quantmod)
+library(dplyr)
+library(ggthemes)
+library(curl)
+library(readxl)
+library(cowplot)
+library(ggpubr)
+library(plotly)
+library(pastecs)
+library(kableExtra)
+library(broom)
+library(lmtest)
+library(tseries)
+library(sandwich)
+```
+
+
+
+Background: Gold is historically considered a hedge against inflation. Given the current state of high inflation in the U.S., it is natural to consider taking or adding to a position in Gold within our Portfolio to increase portfolio performance. However, the Federal Reserve in the U.S. is taking steps to combat inflation- by increasing interest rates. The purpose of this report is to investigate the relationships between Gold, inflation, and interest rates before considering the addition of Gold to our wider portfolio.
+
+
+## Data Description 
+
+Let's start by analyzing the variables of interest:
+
++ Gold: Log returns SPDR Gold Shares ETF (Ticker: GLD) from Yahoo Finance
+
++ Interest Rates: Change in 1 Year Treasury Yield from FRED
+
++ Inflation Rate: Rate of change of Consumer Price Index for All Urban Consumers: All Items in U.S. City Average- Seasonally Adjusted from FRED
+
+
+Starting off, in Table 1 we see that the mean monthly return on Gold is 0.632%, which equates to an annualized average return of 7.85% with high volatility of 5.1% per month. If Gold is valued mainly as an inflation hedge, it seems to have delivered much more than that. Figure 1 shows that the pattern of gold returns has been relatively consistent throughout the sample. 
+
+The mean inflation rate in Table 1 is 0.155% per month or ~2% annualized, exactly in line with the Federal Reserves long-run inflation target. Figure 2 shows significant inflationary pressure between 2005 and 2008 before a large dip coinciding with the Global recession in 2008 and another sizable dip in late 2014. Mean interest rate change is effectively zero, indicating that interest rates over the period have generally been mean-reverting. Interest rates are primarily used as a tool to control inflation, and it seems the Fed has been effective in finding and maintaining a long-run equilibrium between the two. Figure 3 shows similar behavior as CPI, with a rise and fall in interest rates around the Global recession and a dip in late 2014/early 2015. Figure 4 shows this relationship in more detail, with interest rate changes seeming to lead inflation somewhat, particularly during the 2005-2008 period. 
+
+
+In terms of distribution, returns on Gold ETFs appear normal, while the inflation rate exhibits high excess Kurtosis and interest rate changes exhibit mildly higher than normal kurtosis. This means there is a relatively higher than normal chance of extremely positive or negative changes in inflation and interest rates relative to a normal distribution. Investors should be aware that when these variables change, the changes are more likely to be drastic and have drastic effects on assets which are sensitive to them. 
+
+
+
+```{r }
+# Data manipulation chunk- don't show
+
+## Gold ETF##
+gold.dat<-tidyquant::tq_get(x=c("GLD"),
+                             get="stock.prices", 
+                             from ="2005-01-01",
+                             to= "2019-01-01") %>% 
+  stats::na.omit() %>% dplyr::select(date,close)  %>%  
+    tq_transmute(select = close, mutate_fun = to.monthly,indexAt = "firstof") %>% dplyr::mutate(return=100*log(close/lag(close)))
+  
+## CPI  ##
+
+CPI.dat<-tidyquant::tq_get(c("CPIAUCSL"), 
+                           get="economic.data",
+                           from="2005-01-01", 
+                           to="2019-01-01") %>% dplyr::select(date,price) %>% dplyr::mutate(rate=100*(price-lag(price))/lag(price)) 
+
+## Interest Rates ##
+
+#Download key US benchmark interest rates from FRED
+IR.dat<-tidyquant::tq_get(c("DGS2"), 
+                          get="economic.data", 
+                          from="2005-01-01", 
+                          to="2019-01-01") %>% dplyr::select(date,price) %>%
+                          tq_transmute(mutate_fun = to.monthly, indexAt = "firstof") %>% dplyr::mutate(change=price-lag(price))
+
+final.dat<-dplyr::left_join(gold.dat, CPI.dat,by="date") %>% dplyr::left_join(IR.dat, by="date") %>% dplyr::select(date,return,rate,change) 
+```
+
+
+```{r}
+#Summary statistics
+
+final.dat %>% dplyr::select(return,rate,change) %>% pastecs::stat.desc(basic=TRUE, desc=TRUE, norm=TRUE) %>% kable(caption="Table 1: Descriptive Statistics", col.names=c("Return","IR", "Inflation")) %>% kable_styling()
+
+```
+
+<div class = 'center'>
+```{r}
+#Plots
+
+Gold.plot<- final.dat %>% ggplot(aes(x=date, y=return))+geom_line(color="red", size=1.1)+theme_gray()+
+  labs(title="Figure 1: Monthly Returns on SPDR Gold Shares ETF (Ticker: GLD)", subtitle="2005-2019", caption="source: Yahoo Finance", y="%", x="")
+
+ggplotly(Gold.plot)
+
+CPI.plot<- final.dat %>% ggplot(aes(x=date, y=rate))+geom_line(color="blue", size=1.1)+theme_gray()+
+  labs(title="Figure 2: Monthly Inflation Rate", subtitle="2005-2019", caption="source: FRED", y="%", x="")
+
+ggplotly(CPI.plot)
+
+IR.plot<- final.dat %>% ggplot(aes(x=date, y=change))+geom_line(color="purple", size=1.1)+theme_gray()+
+  labs(title="Figure 3: Change in 2 Year Treasury Yield", subtitle="2005-2019", caption="source: FRED", y="%", x="")
+
+ggplotly(IR.plot)
+
+IR_CPI.plot<- final.dat %>% 
+  ggplot()+geom_line(aes(x=date, y=rate), color="blue", size=1.1)+
+          geom_line(aes(x=date, y=change), color="purple", size=1.1)+theme_gray()+
+          labs(title="Figure 4: CPI Rate and Interest Rate Changes", subtitle="2005-2019", caption="source:FRED", y="%", x="")
+
+ggplotly(IR_CPI.plot)
+
+
+```
+</div>
+
+## Analysis
+
+Moving to a more formal investigation of these relationships. Table 2 surprisingly shows no significant linear relationship between returns on Gold and the inflation rate. This may call into question the rationale of using Gold as an inflation hedge. However, it could be that our simple linear regression model is too simplistic to isolate the true relationship or that the relationship has simply become more complicated in our sample (which is relatively short and recent)
+
+Table 3 shows a a highly significant negative link between Gold returns and interest rates. When interest rates increase by 1%, we would expect Gold prices to decrease by ~6.2%. Again this is interesting because the value of Gold, as a commodity, should change with Supply and Demand. So there are multiple stories which could potentially explain this link. The supply side is an unlikely contributor. On the demand side 1) Higher interest rates may make fixed income investments relatively more attractive to hold, reducing demand to hold Gold. 2) Higher interest rates may slow the economy and cause increased unemployment, creating a liquidity driven sell-off of assets like Gold, decreasing demand to hold it 3) If Gold demand IS linked to its inflation hedging properties, higher interest rates generally cool inflation making Gold less attractive in a lower or deflationary environment. 
+
+Table 4 shows a positive relationship between the inflation rate and interest rates. This seems to indicate that when interest rates go up, inflation goes up. However, it is important to keep in mind that this is only measuring the "contemperaneous" relationship between inflation and interest rates (that is- inflation and interest rates at the same point in time). This may not capture the longer run reaction of inflation to higher interest rates (or vice versa). So again, our model may be too simple to capture the true dynamic relationship.
+
+Table 5 shows the results of a multivariate regression of Gold returns on both inflation and interest rates. In this case, the relationship to interest rate changes is similar to the univariate regression, but we measure a stronger relationship between Gold prices and Inflation (though still marginally insignificant). Clearly in our univariate regression of Gold on inflation, interest rates were an omitted variable and its exclusion harmed the performance of our model (inducing omitted variable bias).
+
+
+
+
+```{r}
+#Regressions
+
+
+## Gold vs Inflation ##
+
+gold_cpi.model<-lm(formula= (return) ~ (rate), data=final.dat)
+gold_cpi.model %>% tidy() %>% kable(caption="Table 2: Gold Returns vs Inflation Rate") %>% kable_styling()
+
+
+## Gold and Interest Rates ##
+
+gold_ir.model<-lm(formula= (return) ~ (change), data=final.dat)
+summary(gold_ir.model) %>%  tidy() %>% kable(caption="Table 3: Gold Returns vs Interest Rate Changes") %>% kable_styling()
+
+##  Inflation and Interest Rates ##
+
+cpi_ir.model<-lm(formula= (rate) ~ (change), data=final.dat)
+summary(cpi_ir.model)  %>%  tidy() %>% kable(caption="Table 4: Inflation Rate vs Interest Rate Changes") %>% kable_styling()
+
+## Gold vs Inflation and Interest Rates ##
+
+gold_cpi_ir.model<-lm(formula= (return) ~ rate + change, data=final.dat)
+summary(gold_cpi_ir.model)  %>%  tidy() %>% kable(caption="Table 5: Gold Returns vs Inflation Rate and Interest Rate Changes") %>% kable_styling()
+```
+
+## Model Diagnostics
+
+Let's turn our focus to checking model assumptions for the most promising regression- that of Gold returns on inflation and interest rate changes. Plotting residuals against fitted values in Figure 5, there seems to be higher residual variance around the mean, though the departure from constant variance appears relatively mild. Meanwhile, our Q-Q plot looks relatively on-line, with no major evident departures from normality in residuals as confirmed by a relatively normal looking histogram of residuals.
+
+More formally, Table 6 shows a statistically significant departure from heteroskedasticity using the Breusch-Pagan test, while Table 7 shows autocorrelation at order 1 with very marginal significance, though the result is mixed, with a Durbin-Watson test failing to find signs of autocorrelation. Finally, our formal tests for normality (KS Test and JB Test) both reject normality. However, the departures seem mild (as per Q-Q plot and Histogram) and our sample size is large enough that this should not be a problem for hypothesis tests. 
+
+Finally, there is likely to be endogeneity concerns about our regression. There may be additional omitted variables beyond inflation and interest rates which are important determinants of both Gold returns and inflation and interest rates which induces omitted variable or simulteneity bias. Additionally, because our model is not dynamic, there could be longer run effects that we are missing. 
+```{r}
+#Diagnostics
+plot(gold_cpi_ir.model, main="Figure 5: Diagnostic Plots")
+hist(gold_cpi_ir.model$residuals, breaks=100, main="Figure 6: Residual Histogram") #maybe slightly skewed, but seems reasonably normal
+
+#Testing Heteroskedasticity
+#Breusch-Pagan Test
+library(lmtest)
+bptest(gold_cpi_ir.model)
+
+#Testing Autocorrelation
+# Durbin Watson Test
+dwtest(gold_cpi_ir.model)
+bgtest(gold_cpi_ir.model, order=1)
+
+
+#Looking at Normality
+ #look at the residuals plot and the Q-Q plot- seems reasonably normal
+stat.desc(gold_cpi_ir.model$residuals, basic=FALSE, desc=FALSE, norm=TRUE) %>% kable() %>% kable_styling() #we can look at descriptive statistics
+ks.test(gold_cpi_ir.model$residuals, "pnorm") #or we can just run a normality test- not normal
+jarque.bera.test(gold_cpi_ir.model$residuals)
+
+```
+
+
+## Conclusion
+
+There is still no significantly significant evidence that Gold is a good inflation hedge from these models, but there are signs that our models are not sophisticated enough to fully capture the dynamic relationships, and there is enough evidence to warrant further investigation with more sophisticated models.
